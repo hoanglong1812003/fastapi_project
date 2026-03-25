@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>PicFeed</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f0f0f;
+      --surface: #1a1a1a;
+      --surface2: #242424;
+      --border: #2e2e2e;
+      --accent: #6c63ff;
+      --accent-hover: #574fd6;
+      --text: #f0f0f0;
+      --muted: #888;
+      --danger: #e05252;
+      --radius: 14px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+    }
+
+    /* ── Navbar ── */
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(15,15,15,.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 24px; height: 60px;
+    }
+    .logo { font-size: 1.3rem; font-weight: 700; color: var(--accent); letter-spacing: -0.5px; }
+    .nav-btn {
+      background: var(--accent); color: #fff; border: none;
+      padding: 8px 18px; border-radius: 8px; font-size: .9rem;
+      cursor: pointer; font-weight: 600; transition: background .2s;
+    }
+    .nav-btn:hover { background: var(--accent-hover); }
+
+    /* ── Layout ── */
+    .layout {
+      max-width: 680px; margin: 0 auto; padding: 32px 16px;
+      display: flex; flex-direction: column; gap: 24px;
+    }
+
+    /* ── Upload Card ── */
+    .upload-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      display: none; flex-direction: column; gap: 14px;
+    }
+    .upload-card.open { display: flex; }
+
+    .drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: 10px;
+      padding: 32px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      position: relative;
+    }
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: var(--accent);
+      background: rgba(108,99,255,.06);
+    }
+    .drop-zone input[type=file] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer;
+    }
+    .drop-zone .dz-icon { font-size: 2rem; margin-bottom: 8px; }
+    .drop-zone .dz-text { color: var(--muted); font-size: .9rem; }
+    .drop-zone .dz-preview {
+      max-width: 100%; max-height: 220px;
+      border-radius: 8px; object-fit: cover;
+      display: none; margin: 0 auto;
+    }
+
+    textarea {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 8px; color: var(--text);
+      padding: 12px; font-size: .95rem; resize: vertical;
+      min-height: 80px; width: 100%;
+      transition: border-color .2s;
+    }
+    textarea:focus { outline: none; border-color: var(--accent); }
+
+    .upload-actions { display: flex; justify-content: flex-end; gap: 10px; }
+    .btn-cancel {
+      background: transparent; border: 1px solid var(--border);
+      color: var(--muted); padding: 8px 16px; border-radius: 8px;
+      cursor: pointer; font-size: .9rem; transition: border-color .2s;
+    }
+    .btn-cancel:hover { border-color: var(--text); color: var(--text); }
+    .btn-post {
+      background: var(--accent); color: #fff; border: none;
+      padding: 8px 20px; border-radius: 8px; font-size: .9rem;
+      font-weight: 600; cursor: pointer; transition: background .2s;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .btn-post:hover { background: var(--accent-hover); }
+    .btn-post:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* ── Toast ── */
+    #toast {
+      position: fixed; bottom: 24px; right: 24px;
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); padding: 12px 20px; border-radius: 10px;
+      font-size: .9rem; opacity: 0; pointer-events: none;
+      transition: opacity .3s; z-index: 999;
+    }
+    #toast.show { opacity: 1; }
+    #toast.error { border-color: var(--danger); color: var(--danger); }
+
+    /* ── Feed ── */
+    #feed { display: flex; flex-direction: column; gap: 20px; }
+
+    .post-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      animation: fadeUp .35s ease;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .post-img {
+      width: 100%; max-height: 480px;
+      object-fit: cover; display: block;
+      background: var(--surface2);
+    }
+
+    .post-body { padding: 16px; }
+    .post-content {
+      font-size: .95rem; line-height: 1.6;
+      color: var(--text); margin-bottom: 12px;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .post-meta {
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .post-filename { font-size: .78rem; color: var(--muted); }
+
+    .post-actions { display: flex; gap: 8px; }
+    .btn-edit, .btn-delete {
+      background: transparent; border: 1px solid var(--border);
+      border-radius: 6px; padding: 5px 12px;
+      font-size: .8rem; cursor: pointer; transition: all .2s;
+    }
+    .btn-edit  { color: var(--accent); }
+    .btn-edit:hover  { background: rgba(108,99,255,.12); border-color: var(--accent); }
+    .btn-delete { color: var(--danger); }
+    .btn-delete:hover { background: rgba(224,82,82,.12); border-color: var(--danger); }
+
+    /* ── Edit inline ── */
+    .edit-area {
+      display: none; flex-direction: column; gap: 8px;
+      padding: 0 16px 16px;
+    }
+    .edit-area.open { display: flex; }
+    .edit-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .btn-save {
+      background: var(--accent); color: #fff; border: none;
+      padding: 6px 14px; border-radius: 6px; font-size: .85rem;
+      font-weight: 600; cursor: pointer;
+    }
+
+    /* ── Empty state ── */
+    .empty {
+      text-align: center; padding: 60px 0; color: var(--muted);
+    }
+    .empty .empty-icon { font-size: 3rem; margin-bottom: 12px; }
+
+    /* ── Spinner ── */
+    .spinner {
+      width: 18px; height: 18px;
+      border: 2px solid rgba(255,255,255,.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .6s linear infinite;
+      display: none;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<nav>
+  <span class="logo">📸 PicFeed</span>
+  <button class="nav-btn" onclick="toggleUpload()">+ New Post</button>
+</nav>
+
+<div class="layout">
+
+  <!-- Upload Card -->
+  <div class="upload-card" id="uploadCard">
+    <div class="drop-zone" id="dropZone">
+      <input type="file" id="fileInput" accept="image/*" />
+      <img class="dz-preview" id="preview" alt="preview" />
+      <div id="dzPlaceholder">
+        <div class="dz-icon">🖼️</div>
+        <div class="dz-text">Kéo thả hoặc click để chọn ảnh</div>
+      </div>
+    </div>
+    <textarea id="captionInput" placeholder="Viết caption cho ảnh..."></textarea>
+    <div class="upload-actions">
+      <button class="btn-cancel" onclick="toggleUpload()">Huỷ</button>
+      <button class="btn-post" id="postBtn" onclick="submitPost()">
+        <div class="spinner" id="postSpinner"></div>
+        <span id="postLabel">Đăng</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Feed -->
+  <div id="feed"></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+  // ── Security: sanitize HTML để tránh XSS ──────────────────────────────────
+  const sanitize = str => str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
+  // ── Functional: pure render function ─────────────────────────────────────
+  const renderPost = ({ id, filename, content, url }) => `
+    <div class="post-card" id="post-${id}">
+      <img class="post-img" src="${sanitize(url)}" alt="${sanitize(filename)}"
+           loading="lazy" onerror="this.style.display='none'" />
+      <div class="post-body">
+        <div class="post-content">${sanitize(content)}</div>
+        <div class="post-meta">
+          <span class="post-filename">📎 ${sanitize(filename)}</span>
+          <div class="post-actions">
+            <button class="btn-edit"   onclick="openEdit(${id}, \`${sanitize(content)}\`)">Sửa</button>
+            <button class="btn-delete" onclick="deletePost(${id})">Xoá</button>
+          </div>
+        </div>
+      </div>
+      <div class="edit-area" id="edit-${id}">
+        <textarea id="edit-text-${id}" rows="3"></textarea>
+        <div class="edit-actions">
+          <button class="btn-cancel" onclick="closeEdit(${id})">Huỷ</button>
+          <button class="btn-save"   onclick="saveEdit(${id})">Lưu</button>
+        </div>
+      </div>
+    </div>`;
+
+  // ── Toast notification ────────────────────────────────────────────────────
+  let toastTimer;
+  function showToast(msg, isError = false) {
+    const t = document.getElementById("toast");
+    t.textContent = msg;
+    t.className = "show" + (isError ? " error" : "");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.className = "", 3000);
+  }
+
+  // ── Toggle upload panel ───────────────────────────────────────────────────
+  function toggleUpload() {
+    const card = document.getElementById("uploadCard");
+    card.classList.toggle("open");
+    if (!card.classList.contains("open")) resetForm();
+  }
+
+  function resetForm() {
+    document.getElementById("fileInput").value = "";
+    document.getElementById("captionInput").value = "";
+    document.getElementById("preview").style.display = "none";
+    document.getElementById("dzPlaceholder").style.display = "block";
+  }
+
+  // ── Drag & drop + preview ─────────────────────────────────────────────────
+  const dropZone = document.getElementById("dropZone");
+  const fileInput = document.getElementById("fileInput");
+
+  dropZone.addEventListener("dragover",  e => { e.preventDefault(); dropZone.classList.add("dragover"); });
+  dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragover"));
+  dropZone.addEventListener("drop", e => {
+    e.preventDefault();
+    dropZone.classList.remove("dragover");
+    const f = e.dataTransfer.files[0];
+    if (f) { fileInput.files = e.dataTransfer.files; showPreview(f); }
+  });
+
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files[0]) showPreview(fileInput.files[0]);
+  });
+
+  function showPreview(file) {
+    // Security: chỉ chấp nhận image MIME
+    if (!file.type.startsWith("image/")) {
+      showToast("Chỉ chấp nhận file ảnh!", true); return;
+    }
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = document.getElementById("preview");
+      img.src = e.target.result;
+      img.style.display = "block";
+      document.getElementById("dzPlaceholder").style.display = "none";
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // ── Submit post ───────────────────────────────────────────────────────────
+  async function submitPost() {
+    const file    = fileInput.files[0];
+    const caption = document.getElementById("captionInput").value.trim();
+
+    if (!file)    { showToast("Vui lòng chọn ảnh!", true); return; }
+    if (!caption) { showToast("Vui lòng nhập caption!", true); return; }
+
+    // Security: giới hạn kích thước file 10MB client-side
+    if (file.size > 10 * 1024 * 1024) {
+      showToast("Ảnh không được vượt quá 10MB!", true); return;
+    }
+
+    setLoading(true);
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("content", caption);
+
+    try {
+      const res = await fetch("/images/", { method: "POST", body: fd });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail ?? "Upload thất bại");
+      }
+      const post = await res.json();
+      prependPost(post);
+      toggleUpload();
+      showToast("Đăng ảnh thành công! 🎉");
+    } catch (e) {
+      showToast(e.message, true);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function setLoading(on) {
+    document.getElementById("postBtn").disabled    = on;
+    document.getElementById("postSpinner").style.display = on ? "block" : "none";
+    document.getElementById("postLabel").textContent     = on ? "" : "Đăng";
+  }
+
+  // ── Prepend / load feed ───────────────────────────────────────────────────
+  function prependPost(post) {
+    const feed  = document.getElementById("feed");
+    const empty = feed.querySelector(".empty");
+    if (empty) empty.remove();
+    feed.insertAdjacentHTML("afterbegin", renderPost(post));
+  }
+
+  async function loadFeed() {
+    try {
+      const res  = await fetch("/images/");
+      const data = await res.json();
+      const feed = document.getElementById("feed");
+
+      if (!data.length) {
+        feed.innerHTML = `<div class="empty">
+          <div class="empty-icon">🌄</div>
+          <div>Chưa có bài đăng nào. Hãy là người đầu tiên!</div>
+        </div>`;
+        return;
+      }
+      // List comprehension equivalent: map renderPost rồi join
+      feed.innerHTML = data.reverse().map(renderPost).join("");
+    } catch {
+      showToast("Không thể tải feed!", true);
+    }
+  }
+
+  // ── Edit ──────────────────────────────────────────────────────────────────
+  function openEdit(id, currentContent) {
+    document.getElementById(`edit-${id}`).classList.add("open");
+    document.getElementById(`edit-text-${id}`).value = currentContent;
+  }
+  function closeEdit(id) {
+    document.getElementById(`edit-${id}`).classList.remove("open");
+  }
+
+  async function saveEdit(id) {
+    const newContent = document.getElementById(`edit-text-${id}`).value.trim();
+    if (!newContent) { showToast("Caption không được trống!", true); return; }
+
+    const fd = new FormData();
+    fd.append("content", newContent);
+
+    try {
+      const res = await fetch(`/images/${id}`, { method: "PATCH", body: fd });
+      if (!res.ok) throw new Error("Cập nhật thất bại");
+      const updated = await res.json();
+
+      // Cập nhật DOM trực tiếp không cần reload
+      const card = document.getElementById(`post-${id}`);
+      card.querySelector(".post-content").textContent = updated.content;
+      closeEdit(id);
+      showToast("Đã cập nhật caption ✏️");
+    } catch (e) {
+      showToast(e.message, true);
+    }
+  }
+
+  // ── Delete ────────────────────────────────────────────────────────────────
+  async function deletePost(id) {
+    if (!confirm("Xoá bài đăng này?")) return;
+    try {
+      const res = await fetch(`/images/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Xoá thất bại");
+      document.getElementById(`post-${id}`).remove();
+      if (!document.querySelector(".post-card")) loadFeed(); // show empty state
+      showToast("Đã xoá bài đăng 🗑️");
+    } catch (e) {
+      showToast(e.message, true);
+    }
+  }
+
+  loadFeed();
+</script>
+</body>
+</html>
