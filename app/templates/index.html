@@ -182,6 +182,18 @@
     }
     .empty .empty-icon { font-size: 3rem; margin-bottom: 12px; }
 
+    /* ── Pagination ── */
+    .pagination {
+      display: flex; justify-content: center; gap: 12px; padding: 8px 0;
+    }
+    .btn-page {
+      background: var(--surface); border: 1px solid var(--border);
+      color: var(--text); padding: 8px 20px; border-radius: 8px;
+      cursor: pointer; font-size: .9rem; transition: border-color .2s;
+    }
+    .btn-page:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+    .btn-page:disabled { opacity: .35; cursor: not-allowed; }
+
     /* ── Spinner ── */
     .spinner {
       width: 18px; height: 18px;
@@ -197,8 +209,8 @@
 <body>
 
 <nav>
-  <span class="logo">📸 PicFeed</span>
-  <button class="nav-btn" onclick="toggleUpload()">+ New Post</button>
+  <span class="logo">PicFeed</span>
+  <button class="nav-btn" id="newPostBtn">+ New Post</button>
 </nav>
 
 <div class="layout">
@@ -209,69 +221,91 @@
       <input type="file" id="fileInput" accept="image/*" />
       <img class="dz-preview" id="preview" alt="preview" />
       <div id="dzPlaceholder">
-        <div class="dz-icon">🖼️</div>
-        <div class="dz-text">Kéo thả hoặc click để chọn ảnh</div>
+        <div class="dz-icon">[ img ]</div>
+        <div class="dz-text">Drag & drop or click to select an image</div>
       </div>
     </div>
-    <textarea id="captionInput" placeholder="Viết caption cho ảnh..."></textarea>
+    <textarea id="captionInput" placeholder="Write a caption..." maxlength="500"></textarea>
     <div class="upload-actions">
-      <button class="btn-cancel" onclick="toggleUpload()">Huỷ</button>
-      <button class="btn-post" id="postBtn" onclick="submitPost()">
+      <button class="btn-cancel" id="cancelBtn">Cancel</button>
+      <button class="btn-post" id="postBtn">
         <div class="spinner" id="postSpinner"></div>
-        <span id="postLabel">Đăng</span>
+        <span id="postLabel">Post</span>
       </button>
     </div>
   </div>
 
   <!-- Feed -->
   <div id="feed"></div>
+
+  <!-- Pagination -->
+  <div class="pagination" id="pagination" style="display:none">
+    <button class="btn-page" id="prevBtn" disabled>Previous</button>
+    <button class="btn-page" id="nextBtn">Next</button>
+  </div>
 </div>
 
 <div id="toast"></div>
 
 <script>
-  // ── Security: sanitize HTML để tránh XSS ──────────────────────────────────
-  const sanitize = str => str
+  "use strict";
+
+  const PAGE_SIZE = 20;
+  let currentOffset = 0;
+  let hasMore = false;
+
+  // ── Security: sanitize to prevent XSS ────────────────────────────────────
+  // Escapes HTML entities before inserting any user content into the DOM.
+  const sanitize = str => String(str)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#x27;");
 
   // ── Functional: pure render function ─────────────────────────────────────
+  // renderPost is a pure function: same input always produces same HTML string.
+  // XSS FIX: content is stored in data-content attribute, NOT in onclick.
+  //          This prevents backtick injection through template literals.
   const renderPost = ({ id, filename, content, url }) => `
-    <div class="post-card" id="post-${id}">
+    <div class="post-card" id="post-${id}" data-id="${id}">
       <img class="post-img" src="${sanitize(url)}" alt="${sanitize(filename)}"
            loading="lazy" onerror="this.style.display='none'" />
       <div class="post-body">
         <div class="post-content">${sanitize(content)}</div>
         <div class="post-meta">
-          <span class="post-filename">📎 ${sanitize(filename)}</span>
+          <span class="post-filename">${sanitize(filename)}</span>
           <div class="post-actions">
-            <button class="btn-edit"   onclick="openEdit(${id}, \`${sanitize(content)}\`)">Sửa</button>
-            <button class="btn-delete" onclick="deletePost(${id})">Xoá</button>
+            <button class="btn-edit"
+              data-action="edit"
+              data-id="${id}"
+              data-content="${sanitize(content)}">Edit</button>
+            <button class="btn-delete"
+              data-action="delete"
+              data-id="${id}">Delete</button>
           </div>
         </div>
       </div>
       <div class="edit-area" id="edit-${id}">
-        <textarea id="edit-text-${id}" rows="3"></textarea>
+        <textarea id="edit-text-${id}" rows="3" maxlength="500"></textarea>
         <div class="edit-actions">
-          <button class="btn-cancel" onclick="closeEdit(${id})">Huỷ</button>
-          <button class="btn-save"   onclick="saveEdit(${id})">Lưu</button>
+          <button class="btn-cancel" data-action="close-edit" data-id="${id}">Cancel</button>
+          <button class="btn-save"   data-action="save-edit"  data-id="${id}">Save</button>
         </div>
       </div>
     </div>`;
 
-  // ── Toast notification ────────────────────────────────────────────────────
+  // ── Toast ─────────────────────────────────────────────────────────────────
   let toastTimer;
   function showToast(msg, isError = false) {
     const t = document.getElementById("toast");
     t.textContent = msg;
     t.className = "show" + (isError ? " error" : "");
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => t.className = "", 3000);
+    toastTimer = setTimeout(() => { t.className = ""; }, 3000);
   }
 
-  // ── Toggle upload panel ───────────────────────────────────────────────────
+  // ── Upload panel ──────────────────────────────────────────────────────────
   function toggleUpload() {
     const card = document.getElementById("uploadCard");
     card.classList.toggle("open");
@@ -286,7 +320,7 @@
   }
 
   // ── Drag & drop + preview ─────────────────────────────────────────────────
-  const dropZone = document.getElementById("dropZone");
+  const dropZone  = document.getElementById("dropZone");
   const fileInput = document.getElementById("fileInput");
 
   dropZone.addEventListener("dragover",  e => { e.preventDefault(); dropZone.classList.add("dragover"); });
@@ -297,15 +331,14 @@
     const f = e.dataTransfer.files[0];
     if (f) { fileInput.files = e.dataTransfer.files; showPreview(f); }
   });
-
   fileInput.addEventListener("change", () => {
     if (fileInput.files[0]) showPreview(fileInput.files[0]);
   });
 
   function showPreview(file) {
-    // Security: chỉ chấp nhận image MIME
+    // Security: client-side MIME check before sending to server
     if (!file.type.startsWith("image/")) {
-      showToast("Chỉ chấp nhận file ảnh!", true); return;
+      showToast("Only image files are accepted.", true); return;
     }
     const reader = new FileReader();
     reader.onload = e => {
@@ -322,12 +355,12 @@
     const file    = fileInput.files[0];
     const caption = document.getElementById("captionInput").value.trim();
 
-    if (!file)    { showToast("Vui lòng chọn ảnh!", true); return; }
-    if (!caption) { showToast("Vui lòng nhập caption!", true); return; }
+    if (!file)    { showToast("Please select an image.", true); return; }
+    if (!caption) { showToast("Please write a caption.", true); return; }
 
-    // Security: giới hạn kích thước file 10MB client-side
+    // Security: client-side size check (server also enforces this)
     if (file.size > 10 * 1024 * 1024) {
-      showToast("Ảnh không được vượt quá 10MB!", true); return;
+      showToast("Image must be under 10 MB.", true); return;
     }
 
     setLoading(true);
@@ -339,12 +372,12 @@
       const res = await fetch("/images/", { method: "POST", body: fd });
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.detail ?? "Upload thất bại");
+        throw new Error(err.detail ?? "Upload failed");
       }
       const post = await res.json();
       prependPost(post);
       toggleUpload();
-      showToast("Đăng ảnh thành công! 🎉");
+      showToast("Posted successfully!");
     } catch (e) {
       showToast(e.message, true);
     } finally {
@@ -353,12 +386,12 @@
   }
 
   function setLoading(on) {
-    document.getElementById("postBtn").disabled    = on;
+    document.getElementById("postBtn").disabled = on;
     document.getElementById("postSpinner").style.display = on ? "block" : "none";
-    document.getElementById("postLabel").textContent     = on ? "" : "Đăng";
+    document.getElementById("postLabel").textContent = on ? "" : "Post";
   }
 
-  // ── Prepend / load feed ───────────────────────────────────────────────────
+  // ── Feed ──────────────────────────────────────────────────────────────────
   function prependPost(post) {
     const feed  = document.getElementById("feed");
     const empty = feed.querySelector(".empty");
@@ -366,52 +399,76 @@
     feed.insertAdjacentHTML("afterbegin", renderPost(post));
   }
 
-  async function loadFeed() {
+  async function loadFeed(offset = 0) {
     try {
-      const res  = await fetch("/images/");
+      const res  = await fetch(`/images/?limit=${PAGE_SIZE}&offset=${offset}`);
       const data = await res.json();
       const feed = document.getElementById("feed");
 
-      if (!data.length) {
+      if (offset === 0) feed.innerHTML = "";
+
+      if (!data.length && offset === 0) {
         feed.innerHTML = `<div class="empty">
-          <div class="empty-icon">🌄</div>
-          <div>Chưa có bài đăng nào. Hãy là người đầu tiên!</div>
+          <div class="empty-icon">[ ]</div>
+          <div>No posts yet. Be the first!</div>
         </div>`;
+        document.getElementById("pagination").style.display = "none";
         return;
       }
-      // List comprehension equivalent: map renderPost rồi join
-      feed.innerHTML = data.reverse().map(renderPost).join("");
+
+      // Backend returns newest-first (ORDER BY id DESC) — no .reverse() needed.
+      // [Functional Programming] data.map(renderPost) is a pure transformation pipeline.
+      feed.innerHTML = data.map(renderPost).join("");
+
+      hasMore = data.length === PAGE_SIZE;
+      updatePagination();
     } catch {
-      showToast("Không thể tải feed!", true);
+      showToast("Could not load feed.", true);
     }
+  }
+
+  function updatePagination() {
+    const pg   = document.getElementById("pagination");
+    const prev = document.getElementById("prevBtn");
+    const next = document.getElementById("nextBtn");
+
+    pg.style.display = (currentOffset > 0 || hasMore) ? "flex" : "none";
+    prev.disabled = currentOffset === 0;
+    next.disabled = !hasMore;
   }
 
   // ── Edit ──────────────────────────────────────────────────────────────────
   function openEdit(id, currentContent) {
     document.getElementById(`edit-${id}`).classList.add("open");
+    // Set value via DOM property — never via innerHTML — to avoid XSS
     document.getElementById(`edit-text-${id}`).value = currentContent;
   }
+
   function closeEdit(id) {
     document.getElementById(`edit-${id}`).classList.remove("open");
   }
 
   async function saveEdit(id) {
     const newContent = document.getElementById(`edit-text-${id}`).value.trim();
-    if (!newContent) { showToast("Caption không được trống!", true); return; }
+    if (!newContent) { showToast("Caption cannot be empty.", true); return; }
 
     const fd = new FormData();
     fd.append("content", newContent);
 
     try {
       const res = await fetch(`/images/${id}`, { method: "PATCH", body: fd });
-      if (!res.ok) throw new Error("Cập nhật thất bại");
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail ?? "Update failed");
+      }
       const updated = await res.json();
-
-      // Cập nhật DOM trực tiếp không cần reload
+      // Update DOM via textContent — never innerHTML — to avoid XSS
       const card = document.getElementById(`post-${id}`);
       card.querySelector(".post-content").textContent = updated.content;
+      // Sync the data-content attribute so re-opening edit shows the new value
+      card.querySelector(".btn-edit").dataset.content = updated.content;
       closeEdit(id);
-      showToast("Đã cập nhật caption ✏️");
+      showToast("Caption updated.");
     } catch (e) {
       showToast(e.message, true);
     }
@@ -419,19 +476,55 @@
 
   // ── Delete ────────────────────────────────────────────────────────────────
   async function deletePost(id) {
-    if (!confirm("Xoá bài đăng này?")) return;
+    if (!confirm("Delete this post?")) return;
     try {
       const res = await fetch(`/images/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Xoá thất bại");
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail ?? "Delete failed");
+      }
       document.getElementById(`post-${id}`).remove();
-      if (!document.querySelector(".post-card")) loadFeed(); // show empty state
-      showToast("Đã xoá bài đăng 🗑️");
+      if (!document.querySelector(".post-card")) loadFeed(0);
+      showToast("Post deleted.");
     } catch (e) {
       showToast(e.message, true);
     }
   }
 
-  loadFeed();
+  // ── Event delegation ──────────────────────────────────────────────────────
+  // All button clicks are handled here instead of inline onclick attributes.
+  // This is required for Content Security Policy compliance and avoids the
+  // backtick XSS vulnerability in template-literal onclick strings.
+  document.getElementById("feed").addEventListener("click", e => {
+    const btn = e.target.closest("[data-action]");
+    if (!btn) return;
+    const { action, id, content } = btn.dataset;
+    switch (action) {
+      case "edit":       openEdit(id, content); break;
+      case "delete":     deletePost(id);        break;
+      case "close-edit": closeEdit(id);         break;
+      case "save-edit":  saveEdit(id);          break;
+    }
+  });
+
+  document.getElementById("newPostBtn").addEventListener("click", toggleUpload);
+  document.getElementById("cancelBtn").addEventListener("click", toggleUpload);
+  document.getElementById("postBtn").addEventListener("click", submitPost);
+
+  document.getElementById("prevBtn").addEventListener("click", () => {
+    currentOffset = Math.max(0, currentOffset - PAGE_SIZE);
+    loadFeed(currentOffset);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  });
+
+  document.getElementById("nextBtn").addEventListener("click", () => {
+    currentOffset += PAGE_SIZE;
+    loadFeed(currentOffset);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  });
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+  loadFeed(0);
 </script>
 </body>
 </html>
