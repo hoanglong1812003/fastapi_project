@@ -3,34 +3,29 @@ app.py — Application factory.
 
 Responsibilities:
     - Configure logging
-    - Register global exception handlers (one place for all error formatting)
+    - Register global exception handlers
     - Attach rate limiter
     - Mount routers
+    - Manage DB pool lifecycle (startup / shutdown)
     - Expose health check and UI route
-
-APPLIED CONCEPTS:
-- [Error Handling]         : Global handlers convert typed exceptions → HTTP responses.
-                             Changing the error format means editing this file only.
-- [Package Management - uv]: slowapi, fastapi, jinja2 managed via uv.
 """
 
 import logging
-import logging.config
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from app.db import init_db
+from app.db import close_db, init_db
 from app.exceptions import FileTooLargeError, ImageNotFoundError, InvalidFileError, StorageError
 from app.routers.images import router as images_router
 
-# ── Logging setup ─────────────────────────────────────────────────────────────
+# ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
@@ -39,23 +34,23 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ── Rate limiter ──────────────────────────────────────────────────────────────
-# [Package Management - uv] slowapi managed via uv
 limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
 
 # ── Templates ─────────────────────────────────────────────────────────────────
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
 
-# ── Lifespan ──────────────────────────────────────────────────────────────────
+# ── Lifespan — pool created on startup, closed on shutdown ───────────────────
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await init_db()
     logger.info("Application startup complete")
     yield
-    logger.info("Application shutdown")
+    await close_db()
+    logger.info("Application shutdown complete")
 
 
-# ── App factory ───────────────────────────────────────────────────────────────
+# ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="PicFeed",
     description="Lightweight social image-sharing API",
@@ -68,8 +63,6 @@ app.include_router(images_router)
 
 
 # ── Global exception handlers ─────────────────────────────────────────────────
-# Each handler converts one typed exception into a consistent JSON response.
-# Routes and services never touch HTTPException or status codes directly.
 
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
@@ -100,7 +93,6 @@ async def storage_error_handler(request: Request, exc: StorageError):
 
 @app.get("/health", tags=["meta"])
 async def health():
-    """Health check endpoint — used by load balancers and container orchestrators."""
     return {"status": "ok"}
 
 
